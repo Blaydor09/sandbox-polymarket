@@ -1,10 +1,11 @@
 import logging
 import os
+from typing import Optional
 from fastapi import FastAPI
 from pydantic import BaseModel
 from app.adapter import router as adapter_router, broadcast_order_update
 from app.event_bus import bus
-from app import strategy, risk, broker, audit, observability, portfolio
+from app import strategy, risk, broker, audit, observability, portfolio, execution
 
 # Configuración básica de logs de consola
 logging.basicConfig(
@@ -39,6 +40,7 @@ async def startup_event():
     audit.setup()
     observability.setup()
     portfolio.setup()
+    execution.setup()
     
     # 2. Conectar el WebSocket del adaptador de agente al bus de eventos
     # Queremos que cualquier actualización final se envíe de vuelta al agente por WS
@@ -170,4 +172,107 @@ def resolve_market(req: MarketResolutionRequest):
         return res
     except Exception as e:
         logger.error(f"Error resolviendo mercado: {e}")
+        return {"status": "ERROR", "message": str(e)}
+
+class ExecutionConfigRequest(BaseModel):
+    executionMode: str
+    apiClobUrl: Optional[str] = None
+    exchangeAddress: Optional[str] = None
+    gnosisRpcUrl: Optional[str] = None
+    apiKey: Optional[str] = None
+    apiSecret: Optional[str] = None
+    apiPassphrase: Optional[str] = None
+    privateKey: Optional[str] = None
+
+@app.get("/api/v1/execution/config")
+def get_execution_config():
+    """Devuelve la configuración actual del Execution Service."""
+    try:
+        from app import config
+        from app.execution import execution_service
+        return {
+            "status": "SUCCESS",
+            "execution_mode": config.EXECUTION_MODE,
+            "api_clob_url": config.POLYMARKET_CLOB_API_URL,
+            "exchange_address": config.POLYMARKET_EXCHANGE_ADDRESS,
+            "gnosis_rpc_url": config.GNOSIS_RPC_URL,
+            "is_dry_run": execution_service.is_dry_run,
+            "wallet_address": execution_service.signer.signer_address or "DUMMY_OR_NOT_CONFIGURED"
+        }
+    except Exception as e:
+        logger.error(f"Error consultando config de ejecución: {e}")
+        return {"status": "ERROR", "message": str(e)}
+
+@app.post("/api/v1/execution/config")
+def update_execution_config(req: ExecutionConfigRequest):
+    """Actualiza dinámicamente la configuración del Execution Service en memoria."""
+    try:
+        from app import config
+        from app.execution import execution_service
+        from app.event_bus import bus
+        
+        mode = req.executionMode.upper()
+        if mode not in ("SANDBOX", "REAL"):
+            return {"status": "ERROR", "message": "El campo 'executionMode' debe ser 'SANDBOX' o 'REAL'"}
+            
+        config.EXECUTION_MODE = mode
+        if req.apiClobUrl is not None:
+            config.POLYMARKET_CLOB_API_URL = req.apiClobUrl
+        if req.exchangeAddress is not None:
+            config.POLYMARKET_EXCHANGE_ADDRESS = req.exchangeAddress
+        if req.gnosisRpcUrl is not None:
+            config.GNOSIS_RPC_URL = req.gnosisRpcUrl
+        if req.apiKey is not None:
+            config.POLYMARKET_API_KEY = req.apiKey
+        if req.apiSecret is not None:
+            config.POLYMARKET_API_SECRET = req.apiSecret
+        if req.apiPassphrase is not None:
+            config.POLYMARKET_API_PASSPHRASE = req.apiPassphrase
+        if req.privateKey is not None:
+            config.POLYMARKET_PRIVATE_KEY = req.privateKey
+            
+        # Re-inicializar dependencias de ejecución con las nuevas claves
+        from app.execution import VaultSigner, GnosisTransactionManager
+        execution_service.signer = VaultSigner(config.POLYMARKET_PRIVATE_KEY)
+        execution_service.tx_manager = GnosisTransactionManager(config.GNOSIS_RPC_URL)
+        execution_service.api_url = config.POLYMARKET_CLOB_API_URL
+        execution_service.exchange_address = config.POLYMARKET_EXCHANGE_ADDRESS
+        execution_service.is_dry_run = not (config.POLYMARKET_API_KEY and config.POLYMARKET_PRIVATE_KEY)
+        
+        # Suscribir o remover las subscripciones en base al nuevo modo
+        bus.unsubscribe("risk.order.approved", execution_service.execute_real_order)
+        from app.broker import broker
+        bus.unsubscribe("risk.order.approved", broker.execute_order)
+        
+        if config.EXECUTION_MODE == "REAL":
+            bus.subscribe("risk.order.approved", execution_service.execute_real_order)
+            logger.info("Fase 5: Middleware migrado a modo REAL (Micro Trading en vivo).")
+        else:
+            bus.subscribe("risk.order.approved", broker.execute_order)
+            logger.info("Fase 5: Middleware migrado a modo SANDBOX (Simulación Fake Broker).")
+            
+        return {
+            "status": "SUCCESS",
+            "message": f"Configuración de ejecución actualizada. Modo actual: {config.EXECUTION_MODE}",
+            "is_dry_run": execution_service.is_dry_run
+        }
+    except Exception as e:
+        logger.error(f"Error actualizando config de ejecución: {e}")
+        return {"status": "ERROR", "message": str(e)}
+
+@app.get("/api/v1/execution/balance")
+def get_execution_balance(wallet_address: Optional[str] = None):
+    """Consulta el balance de tokens en Gnosis Chain."""
+    try:
+        from app.execution import execution_service
+        addr = wallet_address or execution_service.signer.signer_address or "0x8F929DeFA771f81d111CdACa936a29f8f413998b"
+        balance = execution_service.tx_manager.get_token_balance(addr)
+        return {
+            "status": "SUCCESS",
+            "wallet_address": addr,
+            "usdc_balance": balance,
+            "is_mocked": execution_service.tx_manager.is_mocked
+        }
+    except Exception as e:
+        logger.error(f"Error consultando balance RPC: {e}")
         return {"status": "ERROR", "message": str(e)}

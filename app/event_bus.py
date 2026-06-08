@@ -16,6 +16,15 @@ class EventBus:
         self._subscribers[topic].append(handler)
         logger.debug(f"Suscrito handler a: {topic}")
 
+    def unsubscribe(self, topic: str, handler: Callable[[Dict[str, Any]], Any]) -> None:
+        """Desuscribe una función callback de un tópico."""
+        if topic in self._subscribers:
+            try:
+                self._subscribers[topic].remove(handler)
+                logger.debug(f"Desuscrito handler de: {topic}")
+            except ValueError:
+                pass
+
     async def publish(self, topic: str, event_data: Dict[str, Any]) -> None:
         """
         Publica un evento asincrónico a todos los suscriptores del tópico.

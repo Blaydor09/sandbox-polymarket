@@ -36,5 +36,16 @@ STRATEGY_MIN_CONFIDENCE = 0.75  # Nivel de confianza mínimo para operar una se�
 # Configuración de Simulación de Matching y Broker (Fake Broker)
 SLIPPAGE_K_FACTOR = 0.05             # Sensibilidad del slippage al volumen de la orden
 SLIPPAGE_GAUSSIAN_NOISE_STD = 0.005  # Ruido probabilístico del slippage
+Subprocess_delay = 50                # Latencia base
 LATENCY_GAMMA_ALPHA = 2.0            # Parámetro de forma para la distribución Gamma de latencia
 LATENCY_GAMMA_BETA = 50.0            # Escala en ms (media = alpha * beta = 100ms)
+
+# Configuración de Micro Trading Real (Fase 5)
+EXECUTION_MODE = "SANDBOX"  # "SANDBOX" o "REAL"
+POLYMARKET_CLOB_API_URL = "https://clob.polymarket.com"
+POLYMARKET_EXCHANGE_ADDRESS = "0x4b7c2957b6b15efb1f7281fbf2a2c2b0d5c0b8de"
+GNOSIS_RPC_URL = "https://rpc.gnosischain.com"
+POLYMARKET_API_KEY = ""
+POLYMARKET_API_SECRET = ""
+POLYMARKET_API_PASSPHRASE = ""
+POLYMARKET_PRIVATE_KEY = ""

@@ -181,5 +181,7 @@ class SandboxBroker:
 broker = SandboxBroker()
 
 def setup():
-    bus.subscribe("risk.order.approved", broker.execute_order)
+    from app.config import EXECUTION_MODE
+    if EXECUTION_MODE == "SANDBOX":
+        bus.subscribe("risk.order.approved", broker.execute_order)
     bus.subscribe("market.ticker.clob", broker.handle_market_data)
