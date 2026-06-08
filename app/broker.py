@@ -20,34 +20,26 @@ class SandboxBroker:
         # Formato de niveles: [precio, volumen_disponible]
         self.mock_orderbooks: Dict[str, Dict[str, List[List[float]]]] = {}
 
-    def get_or_create_orderbook(self, market_address: str) -> Dict[str, List[List[float]]]:
-        """Devuelve o inicializa un libro de órdenes de prueba simulado para el mercado."""
+    def get_or_create_orderbook(self, market_address: str, default_price: float = 0.50) -> Dict[str, List[List[float]]]:
+        """Devuelve o inicializa un libro de órdenes simulado para el mercado.
+        Si el mercado no tiene orderbook (ni mock ni live), lo crea alrededor de default_price.
+        """
         if market_address not in self.mock_orderbooks:
-            # Generar spread base y liquidez
-            # Precio ideal = 0.60 para comprar outcome 1
+            p = default_price
             self.mock_orderbooks[market_address] = {
                 "asks": [
-                    [0.60, 500.0],
-                    [0.61, 800.0],
-                    [0.62, 1500.0],
-                    [0.64, 3000.0],
-                    [0.67, 5000.0]
+                    [round(p, 3), 500.0],
+                    [round(p + 0.02, 3), 1000.0],
+                    [round(p + 0.05, 3), 2500.0],
+                    [round(p + 0.10, 3), 5000.0]
                 ],
                 "bids": [
-                    [0.59, 600.0],
-                    [0.58, 1000.0],
-                    [0.57, 2000.0],
-                    [0.55, 4000.0],
-                    [0.52, 6000.0]
+                    [round(p - 0.02, 3), 600.0],
+                    [round(p - 0.04, 3), 1200.0],
+                    [round(p - 0.07, 3), 2500.0],
+                    [round(p - 0.12, 3), 5000.0]
                 ]
             }
-            # Simular oscilación leve del mercado real (variación de volumen/spread de +-5%)
-            ob = self.mock_orderbooks[market_address]
-            for level in ob["asks"]:
-                level[1] = max(100.0, level[1] * random.uniform(0.95, 1.05))
-            for level in ob["bids"]:
-                level[1] = max(100.0, level[1] * random.uniform(0.95, 1.05))
-            
         return self.mock_orderbooks[market_address]
 
     async def handle_market_data(self, event_data: Dict[str, Any]) -> None:
@@ -85,7 +77,7 @@ class SandboxBroker:
         await asyncio.sleep(simulated_latency_ms / 1000.0)
 
         # Obtener el orderbook de este mercado
-        orderbook = self.get_or_create_orderbook(market_address)
+        orderbook = self.get_or_create_orderbook(market_address, default_price=limit_price)
         targets = orderbook["asks"] if side == "BUY" else orderbook["bids"]
         
         # 2. Algoritmo de Matching

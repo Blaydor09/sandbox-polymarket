@@ -2,7 +2,7 @@
   "global_circuit_breaker": false,
   "agent_daily_loss": {},
   "agent_exposure": {
-    "openclaw_v2_alpha": 44.12
+    "openclaw_v2_alpha": 45.88
   },
-  "updated_at": "2026-06-08T03:33:11.807538+00:00"
+  "updated_at": "2026-06-08T03:51:39.252176+00:00"
 }
