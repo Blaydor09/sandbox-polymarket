@@ -5,7 +5,7 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 from app.adapter import router as adapter_router, broadcast_order_update
 from app.event_bus import bus
-from app import strategy, risk, broker, audit, observability, portfolio, execution
+from app import strategy, risk, broker, audit, observability, portfolio, execution, supervision
 
 # Configuración básica de logs de consola
 logging.basicConfig(
@@ -41,6 +41,7 @@ async def startup_event():
     observability.setup()
     portfolio.setup()
     execution.setup()
+    supervision.setup()
     
     # 2. Conectar el WebSocket del adaptador de agente al bus de eventos
     # Queremos que cualquier actualización final se envíe de vuelta al agente por WS
@@ -275,4 +276,62 @@ def get_execution_balance(wallet_address: Optional[str] = None):
         }
     except Exception as e:
         logger.error(f"Error consultando balance RPC: {e}")
+        return {"status": "ERROR", "message": str(e)}
+
+class SupervisionToggleRequest(BaseModel):
+    enabled: bool
+
+class SupervisionRejectRequest(BaseModel):
+    reason: str
+
+@app.get("/api/v1/supervision/pending")
+def get_pending_supervision():
+    """Retorna las órdenes que están esperando aprobación humana."""
+    try:
+        from app.supervision import supervision_manager
+        orders = supervision_manager.get_pending_orders_list()
+        return {
+            "status": "SUCCESS",
+            "count": len(orders),
+            "orders": orders
+        }
+    except Exception as e:
+        logger.error(f"Error obteniendo órdenes pendientes de supervisión: {e}")
+        return {"status": "ERROR", "message": str(e)}
+
+@app.post("/api/v1/supervision/approve/{order_id}")
+async def approve_supervision_order(order_id: str):
+    """Aprueba una orden pendiente de supervisión, enviándola a ejecución."""
+    try:
+        from app.supervision import supervision_manager
+        res = await supervision_manager.approve_order(order_id)
+        return res
+    except Exception as e:
+        logger.error(f"Error aprobando orden {order_id} en supervisión: {e}")
+        return {"status": "ERROR", "message": str(e)}
+
+@app.post("/api/v1/supervision/reject/{order_id}")
+async def reject_supervision_order(order_id: str, req: SupervisionRejectRequest):
+    """Rechaza una orden pendiente de supervisión."""
+    try:
+        from app.supervision import supervision_manager
+        res = await supervision_manager.reject_order(order_id, req.reason)
+        return res
+    except Exception as e:
+        logger.error(f"Error rechazando orden {order_id} en supervisión: {e}")
+        return {"status": "ERROR", "message": str(e)}
+
+@app.post("/api/v1/supervision/toggle")
+def toggle_supervision(req: SupervisionToggleRequest):
+    """Activa o desactiva la supervisión humana de forma dinámica."""
+    try:
+        from app import config
+        config.SUPERVISION_ENABLED = req.enabled
+        logger.info(f"Supervisión humana toggled: {config.SUPERVISION_ENABLED}")
+        return {
+            "status": "SUCCESS",
+            "supervision_enabled": config.SUPERVISION_ENABLED
+        }
+    except Exception as e:
+        logger.error(f"Error cambiando estado de supervisión: {e}")
         return {"status": "ERROR", "message": str(e)}

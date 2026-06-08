@@ -1,8 +1,9 @@
 {
-  "usd_balance": 9800.0,
+  "usd_balance": 9820.59,
   "positions": {
     "0x4b7c2957b6b15efb1f7281fbf2a2c2b0d5c0b8de": {
-      "1": 235.2941
+      "1": 176.4706,
+      "2": 117.6471
     }
   }
 }

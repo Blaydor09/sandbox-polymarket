@@ -49,3 +49,7 @@ POLYMARKET_API_KEY = ""
 POLYMARKET_API_SECRET = ""
 POLYMARKET_API_PASSPHRASE = ""
 POLYMARKET_PRIVATE_KEY = ""
+
+# Configuración de Supervisión Humana (Fase 6)
+SUPERVISION_ENABLED = True  # True para requerir aprobación humana, False para operar autónomamente
+SUPERVISION_STATE_FILE = os.path.join(DATA_DIR, "supervision_state.json")

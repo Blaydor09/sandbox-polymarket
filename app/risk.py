@@ -200,7 +200,13 @@ class RiskEngine:
                 }
             }
         }
-        await bus.publish("risk.order.approved", approval_event)
+        from app.config import SUPERVISION_ENABLED
+        if SUPERVISION_ENABLED:
+            logger.info(f"Supervisión activada. Publicando orden {order_id} a cola de supervisión humana.")
+            await bus.publish("risk.order.pending_approval", approval_event)
+        else:
+            logger.info(f"Supervisión desactivada. Enviando orden {order_id} directamente a ejecución.")
+            await bus.publish("risk.order.approved", approval_event)
 
     async def _reject(self, order_id: str, correlation_id: str, reason: str, original_payload: Dict[str, Any]) -> None:
         """Emite evento de rechazo en el Event Bus."""
