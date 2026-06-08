@@ -1,9 +1,10 @@
 import logging
 import os
 from fastapi import FastAPI
+from pydantic import BaseModel
 from app.adapter import router as adapter_router, broadcast_order_update
 from app.event_bus import bus
-from app import strategy, risk, broker, audit, observability
+from app import strategy, risk, broker, audit, observability, portfolio
 
 # Configuración básica de logs de consola
 logging.basicConfig(
@@ -37,6 +38,7 @@ async def startup_event():
     broker.setup()
     audit.setup()
     observability.setup()
+    portfolio.setup()
     
     # 2. Conectar el WebSocket del adaptador de agente al bus de eventos
     # Queremos que cualquier actualización final se envíe de vuelta al agente por WS
@@ -125,3 +127,47 @@ async def get_live_status():
         "is_active": live_market_reader.is_active,
         "monitored_markets": live_market_reader.markets
     }
+
+class MarketResolutionRequest(BaseModel):
+    marketAddress: str
+    winningOutcome: int
+
+@app.get("/api/v1/portfolio")
+def get_portfolio():
+    """Devuelve el estado de la cartera (balance, posiciones y NAV)."""
+    try:
+        from app.portfolio import portfolio_manager
+        return {
+            "status": "SUCCESS",
+            "usd_balance": round(portfolio_manager.usd_balance, 2),
+            "positions": portfolio_manager.positions,
+            "net_asset_value": portfolio_manager.get_net_asset_value()
+        }
+    except Exception as e:
+        logger.error(f"Error obteniendo cartera: {e}")
+        return {"status": "ERROR", "message": str(e)}
+
+@app.post("/api/v1/portfolio/reset")
+def reset_portfolio():
+    """Restablece la cartera al estado inicial."""
+    try:
+        from app.portfolio import portfolio_manager
+        portfolio_manager.reset()
+        return {
+            "status": "SUCCESS",
+            "message": "Cartera restablecida a valores iniciales ($10,000 USD y sin posiciones)."
+        }
+    except Exception as e:
+        logger.error(f"Error restableciendo cartera: {e}")
+        return {"status": "ERROR", "message": str(e)}
+
+@app.post("/api/v1/portfolio/resolve-market")
+def resolve_market(req: MarketResolutionRequest):
+    """Liquida las posiciones de un mercado resuelto de Polymarket."""
+    try:
+        from app.portfolio import portfolio_manager
+        res = portfolio_manager.resolve_market(req.marketAddress, req.winningOutcome)
+        return res
+    except Exception as e:
+        logger.error(f"Error resolviendo mercado: {e}")
+        return {"status": "ERROR", "message": str(e)}

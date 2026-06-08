@@ -10,7 +10,8 @@ from app.config import (
     MAX_DAILY_LOSS_USD,
     LOOP_TIME_WINDOW_SEC,
     LOOP_MAX_ORDERS,
-    RISK_STATE_FILE
+    RISK_STATE_FILE,
+    INITIAL_PORTFOLIO_USD
 )
 
 logger = logging.getLogger("RiskEngine")
@@ -148,12 +149,20 @@ class RiskEngine:
             )
             return
 
-        # 3. Chequear Drawdown acumulado diario
-        current_loss = self.agent_daily_loss.get(agent_id, 0.0)
+        # 3. Chequear Drawdown acumulado diario (basado en el NAV real de la cartera)
+        from app.portfolio import portfolio_manager
+        current_nav = portfolio_manager.get_net_asset_value()
+        current_loss = max(0.0, INITIAL_PORTFOLIO_USD - current_nav)
+        
         if current_loss >= MAX_DAILY_LOSS_USD:
             self.global_circuit_breaker = True
             self.save_state()
-            await self._reject(order_id, correlation_id, "DAILY_DRAWDOWN_LIMIT_EXCEEDED", payload)
+            await self._reject(
+                order_id, 
+                correlation_id, 
+                f"DAILY_DRAWDOWN_LIMIT_EXCEEDED: Pérdida real de {current_loss:.2f} USD supera el límite de {MAX_DAILY_LOSS_USD} USD (NAV={current_nav:.2f} USD)", 
+                payload
+            )
             return
 
         # 4. Chequear Loop Detection
@@ -232,20 +241,7 @@ class RiskEngine:
         # Liberar exposición
         current_exp = self.agent_exposure.get(agent_id, 0.0)
         self.agent_exposure[agent_id] = max(0.0, round(current_exp - amount_usd, 4))
-        
-        # Simular una pérdida aleatoria de prueba para el drawdown diario en la simulación
-        # En trading real esto vendría de liquidar o del resultado de la posición.
-        # Aquí, si el estado es FILLED, simulamos probabilísticamente que el 30% de las operaciones
-        # resultan en una pérdida del 15% del total invertido para probar el Circuit Breaker de Drawdown.
-        if status == "FILLED":
-            import random
-            if random.random() < 0.35: # 35% de probabilidad de pérdida
-                simulated_loss = round(amount_usd * 0.20, 2) # Pérdida del 20% del monto
-                self.add_loss(agent_id, simulated_loss)
-            else:
-                self.save_state()
-        else:
-            self.save_state()
+        self.save_state()
 
 # Instancia global del Risk Engine
 risk_engine = RiskEngine()

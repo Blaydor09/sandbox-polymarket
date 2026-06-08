@@ -68,6 +68,7 @@ class SandboxBroker:
         size_tokens = payload.get("sizeTokens", 0.0)
         limit_price = payload.get("limitPrice", 1.0)
         amount_usd = payload.get("amountUsd", 0.0)
+        outcome_index = payload.get("outcomeIndex", 1)
 
         logger.info(f"Ejecutando orden {order_id} en SandboxBroker. correlationId={correlation_id}")
 
@@ -162,6 +163,8 @@ class SandboxBroker:
                 "orderId": order_id,
                 "agentId": agent_id,
                 "marketAddress": market_address,
+                "side": side,
+                "outcomeIndex": outcome_index,
                 "amountUsd": round(executed_size * average_price, 2),
                 "status": status,
                 "executedSize": round(executed_size, 4),

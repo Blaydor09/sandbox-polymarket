@@ -13,6 +13,10 @@ LIVE_STOP_URL = "http://127.0.0.1:8000/api/v1/live/stop"
 LIVE_STATUS_URL = "http://127.0.0.1:8000/api/v1/live/status"
 WS_URL = "ws://127.0.0.1:8000/ws/signals"
 
+PORTFOLIO_URL = "http://127.0.0.1:8000/api/v1/portfolio"
+PORTFOLIO_RESET_URL = "http://127.0.0.1:8000/api/v1/portfolio/reset"
+PORTFOLIO_RESOLVE_URL = "http://127.0.0.1:8000/api/v1/portfolio/resolve-market"
+
 # Plantilla base para señales de agente
 BASE_SIGNAL = {
     "agentId": "openclaw_v2_alpha",
@@ -101,48 +105,115 @@ async def listen_websocket():
         print(f"[-] Error en WebSocket: {e}")
 
 async def run_scenarios():
-    """Ejecuta los escenarios de simulación para verificar datos live read-only."""
-    print("\n=== REINICIANDO ESTADO DE RIESGO DE PRUEBAS ===")
-    reset_res = await send_post_request_async(RESET_URL)
-    print(f"Resultado del Reset: {reset_res}\n")
+    """Ejecuta la suite de verificación de Paper Trading Avanzado (Fase 4)."""
+    print("\n==================================================")
+    print("INICIANDO VERIFICACIÓN DE FASE 4: PAPER TRADING AVANZADO")
+    print("==================================================")
 
-    # Aseguramos que replay esté parado para no tener interferencias en el bus
+    # 1. Reiniciar estado de riesgo y de cartera
+    print("\n[1] Reiniciando estados de riesgo y cartera...")
+    res_risk = await send_post_request_async(RESET_URL)
+    print(f"    -> Reset Riesgo: {res_risk}")
+    res_port = await send_post_request_async(PORTFOLIO_RESET_URL)
+    print(f"    -> Reset Cartera: {res_port}")
+
+    # Aseguramos que replay esté parado
     await send_post_request_async(REPLAY_STOP_URL)
 
-    # Esperar a que el WebSocket termine de conectarse
+    # Esperar un momento para la conexión WS
     await asyncio.sleep(1.0)
 
-    print("\n=== INICIANDO LECTOR EN VIVO (LIVE READ-ONLY) ===")
-    live_res = await send_post_request_async(LIVE_START_URL)
-    print(f"Resultado Live Start: {live_res}\n")
+    # 2. Consultar estado inicial
+    print("\n[2] Consultando estado inicial de la cartera...")
+    port = await send_get_request_async(PORTFOLIO_URL)
+    print(f"    -> Cartera Inicial: USD={port.get('usd_balance')}, NAV={port.get('net_asset_value')}, Posiciones={port.get('positions')}")
 
-    # Esperar y verificar el estado del lector en vivo (esperar hasta 5 segundos para conexión)
-    status = "STOPPED"
-    for i in range(5):
-        await asyncio.sleep(1.0)
-        status_res = await send_get_request_async(LIVE_STATUS_URL)
-        status = status_res.get("status", "UNKNOWN")
-        print(f"    -> Intento {i+1}: Estado Lector en Vivo = {status}")
-        if status in ("CONNECTED", "OFFLINE_FALLBACK"):
-            break
-
-    print(f"\n[+] Motor configurado en estado operativo: {status}")
-    print("==================================================")
-    print("ESCENARIO 1: Envío de señal contra Orderbook en Vivo (o Fallback)")
-    print("==================================================")
+    # 3. Enviar señal de compra (BUY)
+    print("\n[3] Enviando señal de compra (BUY) para Outcome 1...")
     signal = BASE_SIGNAL.copy()
-    res1 = await send_post_request_async(API_URL, data=signal)
-    print(f"Respuesta HTTP Adapter 1: {res1}")
-
-    # Dar tiempo para ver la ejecución en vivo en los logs
-    await asyncio.sleep(4.0)
-
-    print("\n=== DETENIENDO LECTOR EN VIVO ===")
-    stop_res = await send_post_request_async(LIVE_STOP_URL)
-    print(f"Resultado Live Stop: {stop_res}\n")
+    signal["amountUsd"] = 300.0
+    signal["outcomeIndex"] = 1
+    signal["maxPrice"] = 0.85
+    signal["confidenceScore"] = 0.90
     
-    await asyncio.sleep(1)
-    print("\n=== PRUEBAS DE INGESTA EN VIVO FINALIZADAS ===")
+    trade_res = await send_post_request_async(API_URL, data=signal)
+    print(f"    -> Respuesta Trade: {trade_res}")
+
+    # Esperar a que se procese la orden en el bus de eventos y se ejecute por el broker
+    print("    -> Esperando procesamiento del trade (3 segundos)...")
+    await asyncio.sleep(3.0)
+
+    # 4. Consultar estado de cartera post-compra
+    print("\n[4] Consultando estado de la cartera después de la compra...")
+    port_after_buy = await send_get_request_async(PORTFOLIO_URL)
+    print(f"    -> Cartera Post-Compra: USD={port_after_buy.get('usd_balance')}, NAV={port_after_buy.get('net_asset_value')}, Posiciones={port_after_buy.get('positions')}")
+    
+    # 5. Liquidar mercado (Resolución Ganadora)
+    print("\n[5] Simulando Resolución de Mercado Ganadora (Winning Outcome = 1)...")
+    resolve_data = {
+        "marketAddress": signal["marketAddress"],
+        "winningOutcome": 1
+    }
+    resolve_res = await send_post_request_async(PORTFOLIO_RESOLVE_URL, data=resolve_data)
+    print(f"    -> Respuesta Resolución: {resolve_res}")
+
+    # Consultar estado post-resolución ganadora
+    port_after_resolve = await send_get_request_async(PORTFOLIO_URL)
+    print(f"    -> Cartera Post-Resolución Ganadora: USD={port_after_resolve.get('usd_balance')}, NAV={port_after_resolve.get('net_asset_value')}, Posiciones={port_after_resolve.get('positions')}")
+
+    # 6. Escenario de Drawdown y Circuit Breaker
+    print("\n[6] Iniciando prueba de Drawdown y Circuit Breaker...")
+    # Reset de cartera para empezar limpio
+    await send_post_request_async(PORTFOLIO_RESET_URL)
+    await send_post_request_async(RESET_URL)
+
+    # Enviar señal de compra grande para generar posiciones expuestas
+    print("    -> Enviando compra de 500 USD...")
+    signal_large = BASE_SIGNAL.copy()
+    signal_large["amountUsd"] = 500.0
+    signal_large["outcomeIndex"] = 1
+    signal_large["maxPrice"] = 0.85
+    signal_large["confidenceScore"] = 0.95
+    await send_post_request_async(API_URL, data=signal_large)
+    
+    print("    -> Esperando procesamiento de compra grande (3 segundos)...")
+    await asyncio.sleep(3.0)
+
+    port_large_buy = await send_get_request_async(PORTFOLIO_URL)
+    print(f"    -> Cartera pre-liquidación perdedora: USD={port_large_buy.get('usd_balance')}, NAV={port_large_buy.get('net_asset_value')}")
+
+    # Liquidar mercado con outcome = 0 (losing outcome) -> Perder los 500 USD de posición
+    print("\n[7] Simulando Resolución de Mercado Perdedora (Winning Outcome = 0)...")
+    resolve_losing = {
+        "marketAddress": signal_large["marketAddress"],
+        "winningOutcome": 0
+    }
+    resolve_losing_res = await send_post_request_async(PORTFOLIO_RESOLVE_URL, data=resolve_losing)
+    print(f"    -> Respuesta Resolución Perdedora: {resolve_losing_res}")
+
+    port_after_loss = await send_get_request_async(PORTFOLIO_URL)
+    print(f"    -> Cartera Post-Pérdida: USD={port_after_loss.get('usd_balance')}, NAV={port_after_loss.get('net_asset_value')}, Posiciones={port_after_loss.get('positions')}")
+
+    # Enviar una nueva señal de compra para ver si el Risk Engine la rechaza por Drawdown excedido
+    print("\n[8] Enviando nueva señal para verificar el Circuit Breaker de Drawdown...")
+    signal_blocked = BASE_SIGNAL.copy()
+    signal_blocked["amountUsd"] = 100.0
+    signal_blocked["outcomeIndex"] = 1
+    signal_blocked["maxPrice"] = 0.85
+    signal_blocked["confidenceScore"] = 0.90
+    
+    blocked_res = await send_post_request_async(API_URL, data=signal_blocked)
+    print(f"    -> Respuesta HTTP (debe ser aceptada a cola): {blocked_res}")
+    
+    print("    -> Esperando validación de riesgo (3 segundos)...")
+    await asyncio.sleep(3.0)
+    
+    print("\n[9] Verificando estado de la cartera tras rechazo...")
+    port_final = await send_get_request_async(PORTFOLIO_URL)
+    print(f"    -> Cartera Final: USD={port_final.get('usd_balance')}, NAV={port_final.get('net_asset_value')}")
+    print("==================================================")
+    print("SUITE DE FASE 4 COMPLETADA")
+    print("==================================================")
 
 async def main():
     # Arrancar la escucha de Websocket en segundo plano

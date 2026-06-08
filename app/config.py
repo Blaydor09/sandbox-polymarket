@@ -11,6 +11,10 @@ os.makedirs(DATA_DIR, exist_ok=True)
 AUDIT_LOG_FILE = os.path.join(DATA_DIR, "audit_log.jsonl")
 RISK_STATE_FILE = os.path.join(DATA_DIR, "risk_state.json")
 HISTORICAL_FEED_FILE = os.path.join(DATA_DIR, "historical_feed.jsonl")
+PORTFOLIO_STATE_FILE = os.path.join(DATA_DIR, "portfolio_state.json")
+
+# Configuración de Cartera (Paper Trading)
+INITIAL_PORTFOLIO_USD = 10000.00
 
 # Parámetros de Replay (Market Replay Engine)
 TIME_DILATION_FACTOR = 1.0      # Multiplicador de velocidad de reproducción (ej. 1.0, 5.0)
