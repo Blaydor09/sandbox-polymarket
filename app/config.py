@@ -10,6 +10,10 @@ os.makedirs(DATA_DIR, exist_ok=True)
 # Archivos de persistencia
 AUDIT_LOG_FILE = os.path.join(DATA_DIR, "audit_log.jsonl")
 RISK_STATE_FILE = os.path.join(DATA_DIR, "risk_state.json")
+HISTORICAL_FEED_FILE = os.path.join(DATA_DIR, "historical_feed.jsonl")
+
+# Parámetros de Replay (Market Replay Engine)
+TIME_DILATION_FACTOR = 1.0      # Multiplicador de velocidad de reproducción (ej. 1.0, 5.0)
 
 # Límites de Riesgo (Risk Engine)
 MAX_EXPOSURE_USD = 1000.00      # Exposición máxima permitida por orden/posición

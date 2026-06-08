@@ -69,3 +69,23 @@ def reset_risk():
     except Exception as e:
         logger.error(f"Error reiniciando riesgo: {e}")
         return {"status": "ERROR", "message": str(e)}
+
+@app.post("/api/v1/replay/start")
+async def start_replay(speed: float = 1.0):
+    """Inicia el motor de replay de datos históricos de Polymarket."""
+    from app.replay import replay_engine
+    success = replay_engine.start(speed=speed)
+    if success:
+        return {"status": "SUCCESS", "message": f"Replay histórico iniciado a {speed}x"}
+    else:
+        return {"status": "ERROR", "message": "No se pudo iniciar el replay. Verifique si ya se encuentra activo."}
+
+@app.post("/api/v1/replay/stop")
+async def stop_replay():
+    """Detiene el motor de replay de datos históricos de Polymarket."""
+    from app.replay import replay_engine
+    success = replay_engine.stop()
+    if success:
+        return {"status": "SUCCESS", "message": "Replay histórico detenido con éxito."}
+    else:
+        return {"status": "ERROR", "message": "El motor de Replay no está activo."}

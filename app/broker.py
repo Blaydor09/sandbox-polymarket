@@ -41,15 +41,25 @@ class SandboxBroker:
                     [0.52, 6000.0]
                 ]
             }
-        
-        # Simular oscilación leve del mercado real (variación de volumen/spread de +-5%)
-        ob = self.mock_orderbooks[market_address]
-        for level in ob["asks"]:
-            level[1] = max(100.0, level[1] * random.uniform(0.95, 1.05))
-        for level in ob["bids"]:
-            level[1] = max(100.0, level[1] * random.uniform(0.95, 1.05))
+            # Simular oscilación leve del mercado real (variación de volumen/spread de +-5%)
+            ob = self.mock_orderbooks[market_address]
+            for level in ob["asks"]:
+                level[1] = max(100.0, level[1] * random.uniform(0.95, 1.05))
+            for level in ob["bids"]:
+                level[1] = max(100.0, level[1] * random.uniform(0.95, 1.05))
             
-        return ob
+        return self.mock_orderbooks[market_address]
+
+    async def handle_market_data(self, event_data: Dict[str, Any]) -> None:
+        """Actualiza el libro de órdenes con ticks provenientes del feed histórico o live."""
+        payload = event_data.get("payload", {})
+        market_address = payload.get("marketAddress")
+        if market_address:
+            self.mock_orderbooks[market_address] = {
+                "asks": payload.get("asks", []),
+                "bids": payload.get("bids", [])
+            }
+            logger.info(f"Orderbook actualizado para {market_address} desde bus de eventos.")
 
     async def execute_order(self, event_data: Dict[str, Any]) -> None:
         """
@@ -177,3 +187,4 @@ broker = SandboxBroker()
 
 def setup():
     bus.subscribe("risk.order.approved", broker.execute_order)
+    bus.subscribe("market.ticker.clob", broker.handle_market_data)

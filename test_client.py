@@ -1,13 +1,15 @@
 import asyncio
 import json
 import urllib.request
+import urllib.parse
 import urllib.error
 import websockets
-import time
 
-API_URL = "http://localhost:8000/api/v1/trade"
-RESET_URL = "http://localhost:8000/api/v1/reset-risk"
-WS_URL = "ws://localhost:8000/ws/signals"
+API_URL = "http://127.0.0.1:8000/api/v1/trade"
+RESET_URL = "http://127.0.0.1:8000/api/v1/reset-risk"
+REPLAY_START_URL = "http://127.0.0.1:8000/api/v1/replay/start"
+REPLAY_STOP_URL = "http://127.0.0.1:8000/api/v1/replay/stop"
+WS_URL = "ws://127.0.0.1:8000/ws/signals"
 
 # Plantilla base para señales de agente
 BASE_SIGNAL = {
@@ -16,7 +18,7 @@ BASE_SIGNAL = {
     "outcomeIndex": 1,
     "side": "BUY",
     "amountUsd": 100.0,
-    "maxPrice": 0.60,
+    "maxPrice": 0.70, # Límite alto para permitir matching
     "confidenceScore": 0.85,
     "strategyId": "polymarket_volatility_arb",
     "reasoning": {
@@ -27,12 +29,17 @@ BASE_SIGNAL = {
     }
 }
 
-def send_post_request(url: str, data: dict) -> dict:
+def send_post_request(url: str, query_params: dict = None, data: dict = None) -> dict:
     """Helper síncrono para enviar peticiones HTTP POST usando urllib."""
+    full_url = url
+    if query_params:
+        params_str = urllib.parse.urlencode(query_params)
+        full_url = f"{url}?{params_str}"
+        
     req = urllib.request.Request(
-        url,
-        data=json.dumps(data).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
+        full_url,
+        data=json.dumps(data).encode("utf-8") if data else None,
+        headers={"Content-Type": "application/json"} if data else {},
         method="POST"
     )
     try:
@@ -46,6 +53,10 @@ def send_post_request(url: str, data: dict) -> dict:
             return {"error": e.code, "message": body}
     except Exception as e:
         return {"error": "connection_error", "message": str(e)}
+
+async def send_post_request_async(url: str, query_params: dict = None, data: dict = None) -> dict:
+    """Ejecuta send_post_request en un hilo separado de forma no bloqueante para el Event Loop."""
+    return await asyncio.to_thread(send_post_request, url, query_params, data)
 
 async def listen_websocket():
     """Escucha el canal WebSocket de notificaciones del sandbox en tiempo real."""
@@ -78,66 +89,75 @@ async def listen_websocket():
         print(f"[-] Error en WebSocket: {e}")
 
 async def run_scenarios():
-    """Ejecuta los escenarios de simulación ordenados en tiempo real."""
+    """Ejecuta los escenarios de simulación de replay histórico."""
     print("\n=== REINICIANDO ESTADO DE RIESGO DE PRUEBAS ===")
-    reset_res = send_post_request(RESET_URL, {})
+    reset_res = await send_post_request_async(RESET_URL)
     print(f"Resultado del Reset: {reset_res}\n")
 
-    await asyncio.sleep(2)  # Dar tiempo para ver conexión WS
+    # Esperar a que el WebSocket termine de conectarse en segundo plano
+    await asyncio.sleep(1.0)
+
+    print("\n=== INICIANDO REPLAY HISTÓRICO (DILATACIÓN 2.0x) ===")
+    # Con velocidad 2.0x: delta de 5 virtual seconds = 2.5 real seconds.
+    # El replay tardará 7.5 segundos reales en completarse.
+    replay_res = await send_post_request_async(REPLAY_START_URL, query_params={"speed": 2.0})
+    print(f"Resultado Replay Start: {replay_res}\n")
+
+    # Esperamos 0.2 segundos para asegurar la inyección de Tick 1 (Punta: 0.60)
+    await asyncio.sleep(0.2)
 
     print("==================================================")
-    print("ESCENARIO 1: Envío de Señal Válida (BUY 100 USD, conf 0.85)")
-    print("Resultado Esperado: Aprobada por riesgo y ejecutada con slippage y latencia.")
-    print("==================================================")
-    signal = BASE_SIGNAL.copy()
-    res1 = send_post_request(API_URL, signal)
-    print(f"Respuesta HTTP Adapter: {res1}")
-    await asyncio.sleep(3) # Esperar a que se procese y se imprima la notificación WS
-
-    print("\n==================================================")
-    print("ESCENARIO 2: Confianza Insuficiente (BUY 100 USD, conf 0.60)")
-    print("Resultado Esperado: Rechazada en Strategy Controller.")
-    print("==================================================")
-    signal = BASE_SIGNAL.copy()
-    signal["confidenceScore"] = 0.60
-    res2 = send_post_request(API_URL, signal)
-    print(f"Respuesta HTTP Adapter: {res2}")
-    await asyncio.sleep(3)
-
-    print("\n==================================================")
-    print("ESCENARIO 3: Exposición Excesiva (BUY 1500 USD, conf 0.90)")
-    print("Resultado Esperado: Rechazada por Risk Engine (Excede Límite de 1000 USD).")
+    print("ESCENARIO 1: Orden en Tick 1 (Precio esperado punta: 0.60)")
     print("==================================================")
     signal = BASE_SIGNAL.copy()
-    signal["amountUsd"] = 1500.0
-    res3 = send_post_request(API_URL, signal)
-    print(f"Respuesta HTTP Adapter: {res3}")
-    await asyncio.sleep(3)
+    signal["outcomeIndex"] = 0  # Usamos outcomeIndex distintos para no activar loop detection
+    res1 = await send_post_request_async(API_URL, data=signal)
+    print(f"Respuesta HTTP Adapter 1: {res1}")
+    
+    # Esperamos 2.5 segundos reales (transcurren 5 segundos virtuales: pasamos al Tick 2)
+    await asyncio.sleep(2.5)
 
     print("\n==================================================")
-    print("ESCENARIO 4: Detección de Bucle (Loop Storm - 4 órdenes rápidas)")
-    print("Resultado Esperado: Las primeras pasan, la 4ta dispara el Circuit Breaker de loop.")
-    print("==================================================")
-    for i in range(1, 5):
-        print(f"\nEnviando señal de bucle #{i}...")
-        signal = BASE_SIGNAL.copy()
-        signal["amountUsd"] = 50.0  # Menor tamaño
-        res = send_post_request(API_URL, signal)
-        print(f"Respuesta HTTP Adapter #{i}: {res}")
-        await asyncio.sleep(0.5) # Muy rápido para disparar la ventana de 10s
-
-    await asyncio.sleep(3) # Esperar a que lleguen todas las notificaciones
-
-    print("\n==================================================")
-    print("ESCENARIO 5: Intento de Operación post-bloqueo")
-    print("Resultado Esperado: Rechazo inmediato por Circuit Breaker Global Activo.")
+    print("ESCENARIO 2: Orden en Tick 2 (Precio esperado punta: 0.62)")
     print("==================================================")
     signal = BASE_SIGNAL.copy()
-    res5 = send_post_request(API_URL, signal)
-    print(f"Respuesta HTTP Adapter: {res5}")
-    await asyncio.sleep(3)
+    signal["outcomeIndex"] = 1
+    res2 = await send_post_request_async(API_URL, data=signal)
+    print(f"Respuesta HTTP Adapter 2: {res2}")
 
-    print("\n=== PRUEBAS FINALIZADAS ===")
+    # Esperamos 2.5 segundos reales (transcurren otros 5 segundos virtuales: pasamos al Tick 3)
+    await asyncio.sleep(2.5)
+
+    print("\n==================================================")
+    print("ESCENARIO 3: Orden en Tick 3 (Precio esperado punta: 0.64)")
+    print("==================================================")
+    signal = BASE_SIGNAL.copy()
+    signal["outcomeIndex"] = 2
+    res3 = await send_post_request_async(API_URL, data=signal)
+    print(f"Respuesta HTTP Adapter 3: {res3}")
+
+    # Esperamos 2.5 segundos reales (transcurren otros 5 segundos virtuales: pasamos al Tick 4)
+    await asyncio.sleep(2.5)
+
+    print("\n==================================================")
+    print("ESCENARIO 4: Límite de Precio Excedido (Ask 0.66, Máximo permitido por la orden: 0.61)")
+    print("Resultado Esperado: El broker rechaza por límite de precio excedido.")
+    print("==================================================")
+    signal = BASE_SIGNAL.copy()
+    signal["outcomeIndex"] = 3
+    signal["maxPrice"] = 0.61  # Muy bajo para el nivel actual (0.66)
+    res4 = await send_post_request_async(API_URL, data=signal)
+    print(f"Respuesta HTTP Adapter 4: {res4}")
+
+    # Esperamos a que se procese
+    await asyncio.sleep(2)
+
+    print("\n=== DETENIENDO REPLAY HISTÓRICO ===")
+    stop_res = await send_post_request_async(REPLAY_STOP_URL)
+    print(f"Resultado Replay Stop: {stop_res}\n")
+    
+    await asyncio.sleep(1)
+    print("\n=== PRUEBAS DE REPLAY HISTÓRICO FINALIZADAS ===")
 
 async def main():
     # Arrancar la escucha de Websocket en segundo plano
