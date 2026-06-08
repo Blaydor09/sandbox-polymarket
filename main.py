@@ -43,6 +43,12 @@ async def startup_event():
     bus.subscribe("risk.order.rejected", broadcast_order_update)
     bus.subscribe("broker.order.execution_report", broadcast_order_update)
     
+    # 3. Autoiniciar lector en vivo si está habilitado
+    from app.config import LIVE_READER_ENABLED
+    if LIVE_READER_ENABLED:
+        from app.live_reader import live_market_reader
+        live_market_reader.start()
+        
     logger.info("Sandbox inicializado correctamente y escuchando en bus de eventos.")
 
 @app.get("/")
@@ -89,3 +95,33 @@ async def stop_replay():
         return {"status": "SUCCESS", "message": "Replay histórico detenido con éxito."}
     else:
         return {"status": "ERROR", "message": "El motor de Replay no está activo."}
+
+@app.post("/api/v1/live/start")
+async def start_live():
+    """Inicia el lector en tiempo real de Polymarket WebSocket."""
+    from app.live_reader import live_market_reader
+    success = live_market_reader.start()
+    if success:
+        return {"status": "SUCCESS", "message": "Lector en vivo de Polymarket iniciado."}
+    else:
+        return {"status": "ERROR", "message": "No se pudo iniciar el lector. Verifique si ya se encuentra activo."}
+
+@app.post("/api/v1/live/stop")
+async def stop_live():
+    """Detiene el lector en tiempo real de Polymarket WebSocket."""
+    from app.live_reader import live_market_reader
+    success = live_market_reader.stop()
+    if success:
+        return {"status": "SUCCESS", "message": "Lector en vivo de Polymarket detenido."}
+    else:
+        return {"status": "ERROR", "message": "El lector en vivo no está activo."}
+
+@app.get("/api/v1/live/status")
+async def get_live_status():
+    """Devuelve el estado de conexión del lector en vivo."""
+    from app.live_reader import live_market_reader
+    return {
+        "status": live_market_reader.status,
+        "is_active": live_market_reader.is_active,
+        "monitored_markets": live_market_reader.markets
+    }

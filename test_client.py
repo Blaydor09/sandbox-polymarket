@@ -7,25 +7,27 @@ import websockets
 
 API_URL = "http://127.0.0.1:8000/api/v1/trade"
 RESET_URL = "http://127.0.0.1:8000/api/v1/reset-risk"
-REPLAY_START_URL = "http://127.0.0.1:8000/api/v1/replay/start"
 REPLAY_STOP_URL = "http://127.0.0.1:8000/api/v1/replay/stop"
+LIVE_START_URL = "http://127.0.0.1:8000/api/v1/live/start"
+LIVE_STOP_URL = "http://127.0.0.1:8000/api/v1/live/stop"
+LIVE_STATUS_URL = "http://127.0.0.1:8000/api/v1/live/status"
 WS_URL = "ws://127.0.0.1:8000/ws/signals"
 
 # Plantilla base para señales de agente
 BASE_SIGNAL = {
     "agentId": "openclaw_v2_alpha",
     "marketAddress": "0x4b7c2957b6b15efb1f7281fbf2a2c2b0d5c0b8de",
-    "outcomeIndex": 1,
+    "outcomeIndex": 10, # Usar index alto para evitar loops
     "side": "BUY",
-    "amountUsd": 100.0,
-    "maxPrice": 0.70, # Límite alto para permitir matching
-    "confidenceScore": 0.85,
-    "strategyId": "polymarket_volatility_arb",
+    "amountUsd": 150.0,
+    "maxPrice": 0.85, # Límite alto para permitir matching
+    "confidenceScore": 0.88,
+    "strategyId": "polymarket_live_feed_arb",
     "reasoning": {
         "llmModel": "gemini-3.5-flash",
-        "promptsUsed": ["prompt_v3_analysis_financial"],
-        "marketAnalysisSummary": "Se observa un spread ineficiente temporal.",
-        "technicalIndicators": {"rsi_14": 42.5}
+        "promptsUsed": ["prompt_v3_live_analysis"],
+        "marketAnalysisSummary": "Cruzando órdenes con datos en vivo/contingencia de Polymarket.",
+        "technicalIndicators": {"rsi_14": 51.2}
     }
 }
 
@@ -54,9 +56,19 @@ def send_post_request(url: str, query_params: dict = None, data: dict = None) ->
     except Exception as e:
         return {"error": "connection_error", "message": str(e)}
 
+def send_get_request(url: str) -> dict:
+    """Helper síncrono para enviar peticiones HTTP GET usando urllib."""
+    try:
+        with urllib.request.urlopen(url) as response:
+            return json.loads(response.read().decode("utf-8"))
+    except Exception as e:
+        return {"error": "connection_error", "message": str(e)}
+
 async def send_post_request_async(url: str, query_params: dict = None, data: dict = None) -> dict:
-    """Ejecuta send_post_request en un hilo separado de forma no bloqueante para el Event Loop."""
     return await asyncio.to_thread(send_post_request, url, query_params, data)
+
+async def send_get_request_async(url: str) -> dict:
+    return await asyncio.to_thread(send_get_request, url)
 
 async def listen_websocket():
     """Escucha el canal WebSocket de notificaciones del sandbox en tiempo real."""
@@ -89,75 +101,48 @@ async def listen_websocket():
         print(f"[-] Error en WebSocket: {e}")
 
 async def run_scenarios():
-    """Ejecuta los escenarios de simulación de replay histórico."""
+    """Ejecuta los escenarios de simulación para verificar datos live read-only."""
     print("\n=== REINICIANDO ESTADO DE RIESGO DE PRUEBAS ===")
     reset_res = await send_post_request_async(RESET_URL)
     print(f"Resultado del Reset: {reset_res}\n")
 
-    # Esperar a que el WebSocket termine de conectarse en segundo plano
+    # Aseguramos que replay esté parado para no tener interferencias en el bus
+    await send_post_request_async(REPLAY_STOP_URL)
+
+    # Esperar a que el WebSocket termine de conectarse
     await asyncio.sleep(1.0)
 
-    print("\n=== INICIANDO REPLAY HISTÓRICO (DILATACIÓN 2.0x) ===")
-    # Con velocidad 2.0x: delta de 5 virtual seconds = 2.5 real seconds.
-    # El replay tardará 7.5 segundos reales en completarse.
-    replay_res = await send_post_request_async(REPLAY_START_URL, query_params={"speed": 2.0})
-    print(f"Resultado Replay Start: {replay_res}\n")
+    print("\n=== INICIANDO LECTOR EN VIVO (LIVE READ-ONLY) ===")
+    live_res = await send_post_request_async(LIVE_START_URL)
+    print(f"Resultado Live Start: {live_res}\n")
 
-    # Esperamos 0.2 segundos para asegurar la inyección de Tick 1 (Punta: 0.60)
-    await asyncio.sleep(0.2)
+    # Esperar y verificar el estado del lector en vivo (esperar hasta 5 segundos para conexión)
+    status = "STOPPED"
+    for i in range(5):
+        await asyncio.sleep(1.0)
+        status_res = await send_get_request_async(LIVE_STATUS_URL)
+        status = status_res.get("status", "UNKNOWN")
+        print(f"    -> Intento {i+1}: Estado Lector en Vivo = {status}")
+        if status in ("CONNECTED", "OFFLINE_FALLBACK"):
+            break
 
+    print(f"\n[+] Motor configurado en estado operativo: {status}")
     print("==================================================")
-    print("ESCENARIO 1: Orden en Tick 1 (Precio esperado punta: 0.60)")
+    print("ESCENARIO 1: Envío de señal contra Orderbook en Vivo (o Fallback)")
     print("==================================================")
     signal = BASE_SIGNAL.copy()
-    signal["outcomeIndex"] = 0  # Usamos outcomeIndex distintos para no activar loop detection
     res1 = await send_post_request_async(API_URL, data=signal)
     print(f"Respuesta HTTP Adapter 1: {res1}")
-    
-    # Esperamos 2.5 segundos reales (transcurren 5 segundos virtuales: pasamos al Tick 2)
-    await asyncio.sleep(2.5)
 
-    print("\n==================================================")
-    print("ESCENARIO 2: Orden en Tick 2 (Precio esperado punta: 0.62)")
-    print("==================================================")
-    signal = BASE_SIGNAL.copy()
-    signal["outcomeIndex"] = 1
-    res2 = await send_post_request_async(API_URL, data=signal)
-    print(f"Respuesta HTTP Adapter 2: {res2}")
+    # Dar tiempo para ver la ejecución en vivo en los logs
+    await asyncio.sleep(4.0)
 
-    # Esperamos 2.5 segundos reales (transcurren otros 5 segundos virtuales: pasamos al Tick 3)
-    await asyncio.sleep(2.5)
-
-    print("\n==================================================")
-    print("ESCENARIO 3: Orden en Tick 3 (Precio esperado punta: 0.64)")
-    print("==================================================")
-    signal = BASE_SIGNAL.copy()
-    signal["outcomeIndex"] = 2
-    res3 = await send_post_request_async(API_URL, data=signal)
-    print(f"Respuesta HTTP Adapter 3: {res3}")
-
-    # Esperamos 2.5 segundos reales (transcurren otros 5 segundos virtuales: pasamos al Tick 4)
-    await asyncio.sleep(2.5)
-
-    print("\n==================================================")
-    print("ESCENARIO 4: Límite de Precio Excedido (Ask 0.66, Máximo permitido por la orden: 0.61)")
-    print("Resultado Esperado: El broker rechaza por límite de precio excedido.")
-    print("==================================================")
-    signal = BASE_SIGNAL.copy()
-    signal["outcomeIndex"] = 3
-    signal["maxPrice"] = 0.61  # Muy bajo para el nivel actual (0.66)
-    res4 = await send_post_request_async(API_URL, data=signal)
-    print(f"Respuesta HTTP Adapter 4: {res4}")
-
-    # Esperamos a que se procese
-    await asyncio.sleep(2)
-
-    print("\n=== DETENIENDO REPLAY HISTÓRICO ===")
-    stop_res = await send_post_request_async(REPLAY_STOP_URL)
-    print(f"Resultado Replay Stop: {stop_res}\n")
+    print("\n=== DETENIENDO LECTOR EN VIVO ===")
+    stop_res = await send_post_request_async(LIVE_STOP_URL)
+    print(f"Resultado Live Stop: {stop_res}\n")
     
     await asyncio.sleep(1)
-    print("\n=== PRUEBAS DE REPLAY HISTÓRICO FINALIZADAS ===")
+    print("\n=== PRUEBAS DE INGESTA EN VIVO FINALIZADAS ===")
 
 async def main():
     # Arrancar la escucha de Websocket en segundo plano

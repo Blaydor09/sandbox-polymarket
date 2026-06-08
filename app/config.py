@@ -15,6 +15,11 @@ HISTORICAL_FEED_FILE = os.path.join(DATA_DIR, "historical_feed.jsonl")
 # Parámetros de Replay (Market Replay Engine)
 TIME_DILATION_FACTOR = 1.0      # Multiplicador de velocidad de reproducción (ej. 1.0, 5.0)
 
+# Parámetros del Live Market Reader (API en Vivo)
+POLYMARKET_WS_URL = "wss://clob.polymarket.com/ws"
+LIVE_READER_ENABLED = True
+LIVE_MARKETS_TO_TRACK = ["0x4b7c2957b6b15efb1f7281fbf2a2c2b0d5c0b8de"]
+
 # Límites de Riesgo (Risk Engine)
 MAX_EXPOSURE_USD = 1000.00      # Exposición máxima permitida por orden/posición
 MAX_DAILY_LOSS_USD = 200.00     # Drawdown diario máximo permitido
